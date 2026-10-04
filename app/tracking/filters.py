@@ -182,6 +182,25 @@ class Debouncer:
         key = (str(key_path).lower(), event_type)
 
         with self._lock:
+            # A MODIFY THAT FOLLOWS ITS OWN CREATE IS NOT A SECOND FACT.
+            #
+            # Windows fires `created` and then `modified` for one new file,
+            # milliseconds apart. Keying only on (path, event_type) made those
+            # two separate keys, so every new file was recorded twice and every
+            # count in every report was doubled. Found by watching the tracker
+            # handle a real folder, not by any test — the unit tests fed it one
+            # event type at a time, which is not what an operating system does.
+            #
+            # A modify LATER in the session is still a real second fact: that is
+            # somebody coming back to the file, and the window is what tells
+            # the two apart.
+            if event_type == "modified":
+                created = self._seen.get((key[0], "created"))
+                if created is not None and (ts - created.first_at) <= self._window:
+                    created.last_at = ts
+                    created.count += 1
+                    return False, created.count
+
             entry = self._seen.get(key)
             if entry is None or (ts - entry.last_at) > self._window:
                 self._seen[key] = _Seen(first_at=ts, last_at=ts, count=1)

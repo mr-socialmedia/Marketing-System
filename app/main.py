@@ -41,7 +41,27 @@ from .security.retention import RetentionManager
 log = logging.getLogger("tracker")
 
 
+def _use_utf8_output() -> None:
+    """
+    Make the Windows console print the characters this program actually uses.
+
+    The default console encoding is cp1252, which cannot represent the em-dash
+    and bullet in the status screen — they arrive as `?`. Worse, an Arabic
+    project or folder name would raise UnicodeEncodeError and take down the
+    command, so this is a correctness fix and not a cosmetic one.
+
+    Wrapped because a redirected stream may not be reconfigurable, and printing
+    is never worth crashing over.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
 def _setup_logging(log_dir: Path, verbose: bool = False) -> None:
+    _use_utf8_output()
     log_dir.mkdir(parents=True, exist_ok=True)
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
     try:

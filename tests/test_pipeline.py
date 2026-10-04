@@ -10,6 +10,7 @@ is the only output worse than no output.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import PurePath
 
 import pytest
 
@@ -67,12 +68,38 @@ class TestDebounce:
         for t in range(60, 3600, 60):
             assert d.should_record(path, "modified", now=float(t))[0] is False
 
-    def test_different_event_types_are_separate_facts(self) -> None:
-        """Creating a file and later editing it are two things worth keeping."""
+    def test_a_modify_following_its_own_create_is_not_a_second_fact(self) -> None:
+        """
+        THE REGRESSION FROM THE FIRST LIVE RUN.
+
+        Windows fires `created` and then `modified` for one new file,
+        milliseconds apart. Keying only on (path, event_type) made those two
+        separate keys, so every new file was recorded twice and every count in
+        every report was doubled.
+
+        The unit tests missed it because they fed one event type at a time,
+        which is not what an operating system does. Watching the tracker handle
+        a real folder showed sixteen rows where eight belonged.
+        """
         d = Debouncer(window_seconds=90)
         path = r"D:\Work\Platinum\logo.psd"
+
         assert d.should_record(path, "created", now=0.0)[0] is True
-        assert d.should_record(path, "modified", now=1.0)[0] is True
+        assert d.should_record(path, "modified", now=0.05)[0] is False
+
+    def test_a_later_modify_IS_a_second_fact(self) -> None:
+        """
+        The other half: coming back to a file after a break is real work.
+
+        If the fix above suppressed every modify that ever followed a create,
+        a file created in the morning and edited all afternoon would appear
+        once, as a creation.
+        """
+        d = Debouncer(window_seconds=90)
+        path = r"D:\Work\Platinum\logo.psd"
+
+        assert d.should_record(path, "created", now=0.0)[0] is True
+        assert d.should_record(path, "modified", now=500.0)[0] is True
 
     def test_case_insensitive_on_windows_paths(self) -> None:
         d = Debouncer(window_seconds=90)
@@ -164,6 +191,38 @@ class TestClassifier:
         project, brand, _, _ = c.project_for(r"D:\Work\Platinum Fit\Campaign\hero.psd")
         assert project == "Platinum Fit"
         assert brand == "Platinum Fit"
+
+    def test_the_approved_folders_own_name_wins_over_a_subfolder(self) -> None:
+        """
+        THE OTHER REGRESSION FROM THE FIRST LIVE RUN.
+
+        Monitoring `D:\\Work\\Platinum Fit` filed everything under "Campaign"
+        and "Social" — generic subfolder names — while ignoring the one folder
+        the user had deliberately chosen and named. The subfolder guess looked
+        plausible in the database, which is what made it dangerous: a wrong
+        project that reads like a right one.
+        """
+        c = Classifier([])
+        project, _, _, confidence = c.project_for(
+            PurePath(r"D:\Work\Platinum Fit\Campaign\hero.psd"),
+            PurePath(r"D:\Work\Platinum Fit"),
+        )
+        assert project == "Platinum Fit"
+        assert confidence < 0.6, "a structural guess must not look like a rule match"
+
+    def test_a_container_root_falls_back_to_the_first_child(self) -> None:
+        """
+        The case the original behaviour got right, which must not regress.
+
+        An approved root called "Work" is a container, not a project. There the
+        folder underneath is the better guess.
+        """
+        c = Classifier([])
+        project, _, _, _ = c.project_for(
+            PurePath(r"D:\Work\Platinum Fit\Campaign\hero.psd"),
+            PurePath(r"D:\Work"),
+        )
+        assert project == "Platinum Fit"
 
     def test_an_unmatched_path_is_unclassified_not_guessed(self) -> None:
         """
@@ -312,7 +371,53 @@ class TestDailyReport:
 # ======================================================================
 # Storage and retention
 # ======================================================================
+def on_disk_bytes(db_path) -> bytes:
+    """
+    Everything the database has actually written, including the WAL.
+
+    THIS HELPER EXISTS BECAUSE THE TEST BELOW WAS PASSING FOR THE WRONG REASON.
+
+    In WAL mode a freshly written row lives in `<name>-wal`, not in `<name>.db`
+    — the main file only receives it at a checkpoint. So
+    `assert secret not in (tmp / "t.db").read_bytes()` was true of a file the
+    secret had never reached yet, and would have stayed true if the path were
+    being stored in the clear.
+
+    A vacuous assertion on the single most important security property is worse
+    than no assertion, because it reports a green tick. Checkpointing first and
+    reading every file the database owns is what makes it mean something.
+    """
+    from pathlib import Path
+
+    base = Path(db_path)
+    blob = b""
+    for suffix in ("", "-wal", "-shm"):
+        candidate = Path(str(base) + suffix)
+        if candidate.exists():
+            blob += candidate.read_bytes()
+    return blob
+
+
 class TestStorage:
+    def test_the_disk_helper_can_actually_see_stored_data(self, tmp_path) -> None:
+        """
+        Guard the guard.
+
+        If `on_disk_bytes` looked in the wrong place, every secrecy assertion
+        below would pass regardless of what the code does. This proves it can
+        see a value that IS deliberately stored in the clear.
+        """
+        db = Database(tmp_path / "t.db")
+        repo = ActivityRepository(db, cipher=None)
+        repo.add(Activity(
+            local_date="2026-03-02", event_type=EventType.MODIFIED,
+            filename="UNIQUE-MARKER-FILE.psd", project="Platinum",
+        ))
+        db.checkpoint()
+
+        assert b"UNIQUE-MARKER-FILE.psd" in on_disk_bytes(tmp_path / "t.db")
+        db.close()
+
     def test_an_activity_round_trips(self, tmp_path) -> None:
         db = Database(tmp_path / "t.db")
         repo = ActivityRepository(db, cipher=None)
@@ -345,9 +450,15 @@ class TestStorage:
             project="Platinum", category=Category.DOCUMENTATION,
         ))
 
-        blob = (tmp_path / "t.db").read_bytes()
+        # Checkpoint first, and read the WAL too. Without this the assertion
+        # inspects a main file the row has not reached yet and passes whatever
+        # was stored — see on_disk_bytes().
+        db.checkpoint()
+        blob = on_disk_bytes(tmp_path / "t.db")
         assert b"Confidential" not in blob
-        assert b"D:\\Work" not in blob
+        assert rb"D:\Work" not in blob
+        # Proof the search is looking somewhere real: the filename IS stored.
+        assert b"salary-review.xlsx" in blob
         db.close()
 
     def test_an_encrypted_path_round_trips(self, tmp_path) -> None:
@@ -370,8 +481,11 @@ class TestStorage:
         # family grouping needs it, and "brief.docx" discloses nothing on its
         # own. Asserting the filename were absent would be asserting against
         # the design rather than testing it.
-        blob = (tmp_path / "t.db").read_bytes()
+        db.checkpoint()
+        blob = on_disk_bytes(tmp_path / "t.db")
         assert rb"D:\Work\Platinum" not in blob
+        # The filename's presence is what proves the assertion above is looking
+        # in the right place rather than at an empty file.
         assert b"brief.docx" in blob
         db.close()
 

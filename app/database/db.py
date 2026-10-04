@@ -64,14 +64,27 @@ class Database:
         conn = sqlite3.connect(str(self.path), timeout=3.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
         self._configure(conn)
-        self._local.conn = conn
 
-        with self._init_lock:
-            if not self._initialised:
-                applied = migrate(conn)
-                if applied:
-                    log.info("Applied %d migration(s) to %s", applied, self.path)
-                self._initialised = True
+        # MIGRATE BEFORE CACHING THE CONNECTION.
+        #
+        # The first version cached it first, so a failing migration left a
+        # connection that every later call happily returned. The error surfaced
+        # exactly once — as a single dropped activity, because add() swallows
+        # sqlite errors to protect the watchdog thread — and then never again.
+        # A database that cannot be migrated must fail every time it is asked
+        # for, loudly, rather than once and quietly.
+        try:
+            with self._init_lock:
+                if not self._initialised:
+                    applied = migrate(conn)
+                    if applied:
+                        log.info("Applied %d migration(s) to %s", applied, self.path)
+                    self._initialised = True
+        except BaseException:
+            conn.close()
+            raise
+
+        self._local.conn = conn
         return conn
 
     @contextmanager

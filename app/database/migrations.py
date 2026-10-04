@@ -135,6 +135,35 @@ def current_version(conn: sqlite3.Connection) -> int:
     return int(row[0]) if row and row[0] is not None else 0
 
 
+def split_statements(script: str) -> list[str]:
+    """
+    Split a migration script into individual statements.
+
+    WHY NOT `executescript`. It issues an implicit COMMIT before it runs, which
+    silently closes any transaction already open. The first version of
+    `migrate()` wrapped it in BEGIN/COMMIT, so the COMMIT afterwards hit no
+    active transaction, raised, and took the whole migration down with it —
+    and because `ActivityRepository.add` swallows sqlite errors to protect the
+    watchdog thread, that surfaced as the first activity after every start
+    being silently dropped. A hard failure disguised as data loss.
+
+    Statements are therefore executed one at a time inside a REAL transaction.
+    SQLite, unlike MySQL, is fully transactional for DDL, so this gives genuine
+    all-or-nothing migrations.
+
+    THE CONSTRAINT THIS IMPOSES: a migration may not contain a compound
+    statement — no `CREATE TRIGGER ... BEGIN ... END`. Splitting on semicolons
+    would cut one in half. `migrate()` asserts it rather than leaving the next
+    person to discover it as a corrupt schema.
+    """
+    # Only `--` line comments are used in these migrations. Stripping them
+    # first keeps a semicolon inside a comment from splitting a statement.
+    without_comments = "\n".join(
+        line.split("--", 1)[0] for line in script.splitlines()
+    )
+    return [s.strip() for s in without_comments.split(";") if s.strip()]
+
+
 def migrate(conn: sqlite3.Connection) -> int:
     """
     Apply everything newer than the recorded version.
@@ -149,10 +178,20 @@ def migrate(conn: sqlite3.Connection) -> int:
     for number, name, fn, sql in MIGRATIONS:
         if number <= version:
             continue
+
+        statements = split_statements(sql) if sql else []
+        for statement in statements:
+            # See split_statements: a trigger body would be cut in half.
+            if " BEGIN " in f" {statement.upper()} ":
+                raise ValueError(
+                    f"Migration {number} ({name}) contains a compound statement. "
+                    "Migrations must be simple statements; see split_statements()."
+                )
+
         try:
             conn.execute("BEGIN")
-            if sql:
-                conn.executescript(sql)
+            for statement in statements:
+                conn.execute(statement)
             if fn is not None:
                 fn(conn)
             conn.execute(
@@ -162,7 +201,13 @@ def migrate(conn: sqlite3.Connection) -> int:
             conn.execute("COMMIT")
             applied += 1
         except Exception:
-            conn.execute("ROLLBACK")
+            # Best effort. If the failure already ended the transaction there is
+            # nothing to roll back, and raising from the handler would hide the
+            # original error — which is the one worth seeing.
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
             raise
 
     return applied

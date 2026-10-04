@@ -95,6 +95,15 @@ FOLDER_CATEGORY_HINTS: dict[str, Category] = {
 # folder rather than by extension.
 AMBIGUOUS_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".tif", ".tiff", ".heic"}
 
+# Folder names that describe a CONTAINER rather than a project. When an
+# approved root is called one of these, the first folder inside it is the
+# better guess; otherwise the root's own name is, because the user chose it.
+GENERIC_ROOT_NAMES = {
+    "work", "works", "projects", "project", "documents", "docs", "desktop",
+    "downloads", "files", "data", "shared", "share", "dropbox", "onedrive",
+    "google drive", "icloud drive", "users", "home", "temp", "new folder",
+}
+
 
 @dataclass(frozen=True)
 class Classification:
@@ -155,9 +164,24 @@ class Classifier:
             if rule.match in text:
                 return rule.project, rule.brand, rule.match, 0.95
 
-        # No rule matched. Fall back to the first folder under the approved
-        # root, which is a structural guess and is scored as one.
+        # ------------------------------------------------------------------
+        # No rule matched. What follows is a structural GUESS, scored as one.
+        #
+        # THE ROOT'S OWN NAME COMES FIRST, and that is a correction. The first
+        # version only ever took the first folder UNDER the root, so monitoring
+        # `D:\Work\Platinum Fit` filed everything under "Campaign" and
+        # "Social" — the generic subfolder names — while ignoring the one
+        # folder the user had deliberately chosen and named. Running it against
+        # a real tree made that obvious immediately.
+        #
+        # A root called "Work" or "Projects" is a container rather than a
+        # project, so for those the first child is the better guess. Everything
+        # else is the user's own vocabulary and is trusted above a subfolder.
+        # ------------------------------------------------------------------
         if root is not None:
+            root_name = PurePath(str(root)).name
+            if root_name and root_name.lower() not in GENERIC_ROOT_NAMES:
+                return root_name, None, None, 0.5
             try:
                 rel = PurePath(str(path)).relative_to(root)
                 if len(rel.parts) > 1:
