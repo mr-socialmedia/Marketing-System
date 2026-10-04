@@ -8,7 +8,7 @@ wrong gets forwarded, quoted in a review, and remembered.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from app.database.db import ActivityRepository, Database
 from app.database.models import Activity, Category, EventType
@@ -277,3 +277,108 @@ class TestWeeklyReport:
     def test_an_empty_week_says_so(self) -> None:
         report = PeriodReportGenerator().weekly([], "2026-09-06", "2026-09-12")
         assert "No tracked activity this week" in report
+
+
+# ======================================================================
+class TestApplicationTracker:
+    """
+    Driven with an injected process list rather than real applications.
+
+    A test that launches Notepad and waits for it tests the operating system's
+    shutdown timing as much as this code — the first live run of this feature
+    reported a session as still open purely because Notepad had not finished
+    exiting after one second.
+    """
+
+    @staticmethod
+    def _tracker(tmp_path, running: list[str], gate=None):
+        from app.database.db import Database
+        from app.security.privacy import PrivacyGate
+        from app.tracking.app_tracker import ApplicationTracker
+
+        db = Database(tmp_path / "a.db")
+        tracker = ApplicationTracker(
+            db=db, gate=gate or PrivacyGate(), approved=["photoshop.exe", "afterfx.exe"]
+        )
+        # Replace the one method that touches the operating system.
+        tracker._running_approved = lambda: set(running)  # type: ignore[method-assign]
+        return db, tracker
+
+    def test_a_session_opens_and_closes(self, tmp_path) -> None:
+        running = ["photoshop.exe"]
+        db, tracker = self._tracker(tmp_path, running)
+        t0 = datetime(2026, 9, 9, 9, 0, tzinfo=timezone.utc)
+
+        assert tracker.poll_once(t0)["opened"] == 1
+
+        running.clear()
+        # Past the resume grace period.
+        assert tracker.poll_once(t0.replace(hour=10))["closed"] == 1
+
+        row = db.connection().execute(
+            "SELECT process_name, ended_at, duration_minutes FROM application_sessions"
+        ).fetchone()
+        assert row["process_name"] == "photoshop.exe"
+        assert row["ended_at"] is not None
+        db.close()
+
+    def test_a_quick_restart_stays_one_sitting(self, tmp_path) -> None:
+        """
+        Applications restart. Premiere crashes; Photoshop is closed to free
+        memory and reopened two minutes later. Recording that as two sittings
+        turns one afternoon into a fragmented list.
+        """
+        running = ["photoshop.exe"]
+        db, tracker = self._tracker(tmp_path, running)
+        t0 = datetime(2026, 9, 9, 9, 0, tzinfo=timezone.utc)
+
+        tracker.poll_once(t0)
+        running.clear()
+        # Inside the grace period — not closed.
+        assert tracker.poll_once(t0 + timedelta(seconds=60))["closed"] == 0
+        running.append("photoshop.exe")
+        assert tracker.poll_once(t0 + timedelta(seconds=120))["opened"] == 0
+
+        count = db.connection().execute(
+            "SELECT COUNT(*) FROM application_sessions"
+        ).fetchone()[0]
+        assert count == 1
+        db.close()
+
+    def test_private_mode_closes_sessions_and_records_nothing(self, tmp_path) -> None:
+        from app.security.privacy import PrivacyGate
+
+        gate = PrivacyGate()
+        running = ["photoshop.exe"]
+        db, tracker = self._tracker(tmp_path, running, gate=gate)
+        t0 = datetime(2026, 9, 9, 9, 0, tzinfo=timezone.utc)
+
+        tracker.poll_once(t0)
+        gate.enable_private_mode()
+
+        # Nothing opens while private, and the open session is closed rather
+        # than left running across a gap the user asked not to be recorded.
+        assert tracker.poll_once(t0 + timedelta(minutes=5)) == {"opened": 0, "closed": 0}
+        open_rows = db.connection().execute(
+            "SELECT COUNT(*) FROM application_sessions WHERE ended_at IS NULL"
+        ).fetchone()[0]
+        assert open_rows == 0
+        db.close()
+
+    def test_an_unapproved_application_is_never_recorded(self, tmp_path) -> None:
+        """The whitelist, again: approving Photoshop is not approving Chrome."""
+        from app.database.db import Database
+        from app.security.privacy import PrivacyGate
+        from app.tracking.app_tracker import ApplicationTracker
+
+        db = Database(tmp_path / "a.db")
+        tracker = ApplicationTracker(
+            db=db, gate=PrivacyGate(), approved=["photoshop.exe"]
+        )
+        tracker._running_approved = lambda: set()  # type: ignore[method-assign]
+
+        tracker.poll_once(datetime(2026, 9, 9, 9, 0, tzinfo=timezone.utc))
+        assert db.connection().execute(
+            "SELECT COUNT(*) FROM application_sessions"
+        ).fetchone()[0] == 0
+        db.close()

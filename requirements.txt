@@ -8,8 +8,8 @@ watchdog>=4.0.0          # filesystem events
 pydantic>=2.7.0          # config and model validation
 cryptography>=42.0.0     # Fernet fallback; DPAPI is reached via ctypes
 
-# Phase 2+ (not imported by Phase 1 code)
-# psutil>=5.9.0          # process detection, for opt-in application tracking
+# Phase 2+ (not imported yet)
+psutil>=5.9.0             # process detection, for opt-in application tracking
 # PySide6>=6.7.0         # desktop GUI
 # APScheduler>=3.10.0    # scheduled local jobs
 

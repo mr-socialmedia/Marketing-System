@@ -78,6 +78,7 @@ The report is printed and written to `reports/daily-YYYY-MM-DD.md`.
 | `weekly [--date …]` | The Sunday-to-Saturday review |
 | `monthly [--date …]` | The management-ready monthly report |
 | `sessions [--date …]` | Rebuild and show the day's sittings |
+| `apps on|off|list|approve|remove` | Opt-in application tracking |
 | `folders list\|add\|remove` | Manage the whitelist |
 | `retention preview\|run` | See or run the deletion sweep |
 | `delete-day [--date …]` | Delete one day's activity |
@@ -171,8 +172,8 @@ The privacy controls are in Phase 1 rather than deferred. Building the features
 first and the controls later produces a program whose controls are retrofitted
 around whatever was convenient.
 
-**Phase 2** — PySide6 desktop app, application tracking, dashboard.
-Work sessions, the weekly review and the monthly report are done.
+**Phase 2** — PySide6 desktop app and dashboard. Work sessions, application
+tracking, the weekly review and the monthly report are done.
 **Phase 3** — AI provider abstraction behind the sanitizer, Gmail, Calendar, Drive.
 **Phase 4** — monthly pipeline, evidence viewer, installer, Task Scheduler.
 

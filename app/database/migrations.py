@@ -119,8 +119,38 @@ CREATE TABLE IF NOT EXISTS settings (
 """
 
 
+_V2_APPLICATION_SESSIONS = """
+-- Opt-in application tracking. OFF by default; see config.tracking.
+--
+-- NOTE WHAT THIS TABLE CANNOT HOLD. There is no column for a window title, a
+-- document title, a command line, a working directory, an open file, or a URL.
+-- psutil offers every one of those and they are all refused: a command line is
+-- `Photoshop.exe "D:\\Work\\Confidential\\salary.psd"`, which would carry a
+-- full path straight past the folder whitelist, and open_files() would list
+-- what somebody has open across the entire disk.
+--
+-- The only fact recorded is that an APPROVED application was running, and for
+-- how long. That is enough to say "this sitting was design work" and nothing
+-- like enough to say what was in it.
+CREATE TABLE IF NOT EXISTS application_sessions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    process_name     TEXT    NOT NULL,       -- "Photoshop.exe", nothing more
+    started_at       TEXT    NOT NULL,
+    ended_at         TEXT,                   -- NULL while still running
+    local_date       TEXT    NOT NULL,
+    duration_minutes INTEGER,
+    created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_sessions_date ON application_sessions(local_date);
+CREATE INDEX IF NOT EXISTS idx_app_sessions_open
+    ON application_sessions(process_name) WHERE ended_at IS NULL;
+"""
+
+
 MIGRATIONS: list[Migration] = [
     (1, "initial schema", None, _V1_SCHEMA),
+    (2, "application sessions", None, _V2_APPLICATION_SESSIONS),
 ]
 
 

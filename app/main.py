@@ -206,6 +206,24 @@ def cmd_watch(app: Application) -> int:
         print(f"Cannot start: {exc}")
         return 1
 
+    # Opt-in, and silent unless the user enabled it. See app_tracker for why
+    # this is the one tracker that is off by default.
+    app_tracker = None
+    if app.config.tracking.track_applications:
+        try:
+            from .tracking.app_tracker import ApplicationTracker
+
+            app_tracker = ApplicationTracker(
+                db=app.db, gate=app.gate,
+                approved=app.config.tracking.approved_applications,
+            )
+            app_tracker.start()
+        except Exception as exc:
+            # A missing psutil or an unusual platform must not stop file
+            # tracking, which is the part that matters.
+            log.warning("Application tracking unavailable: %s", exc)
+            app_tracker = None
+
     tracker.start()
     app.audit.record("tracker_started")
     print(f"\n  Tracking {len(tracker.watched_roots)} folder(s). Ctrl+C to stop.")
@@ -227,6 +245,8 @@ def cmd_watch(app: Application) -> int:
         while not stopping:
             time.sleep(0.5)
     finally:
+        if app_tracker is not None:
+            app_tracker.stop()
         tracker.stop()
         app.audit.record("tracker_stopped")
         stats = tracker.stats()
@@ -348,6 +368,64 @@ def cmd_sessions(app: Application, day: str | None) -> int:
     return 0
 
 
+def cmd_apps(app: Application, action: str, name: str | None) -> int:
+    """
+    Turn application tracking on or off, and manage the approved list.
+
+    Enabling it is audited, because it widens what the program observes — and
+    the audit is what makes the privacy screen trustworthy rather than a claim.
+    """
+    cfg = app.config
+
+    if action == "list":
+        print(f"  Application tracking: {'ON' if cfg.tracking.track_applications else 'OFF'}")
+        for a in cfg.tracking.approved_applications or []:
+            print(f"    - {a}")
+        if not cfg.tracking.approved_applications:
+            print("    (no applications approved — nothing would be recorded)")
+        return 0
+
+    if action in {"on", "off"}:
+        cfg.tracking.track_applications = action == "on"
+        save_config(cfg)
+        app.audit.record(
+            "application_tracking_enabled" if action == "on"
+            else "application_tracking_disabled"
+        )
+        print(f"  Application tracking {action.upper()}")
+        if action == "on" and not cfg.tracking.approved_applications:
+            print("  No applications approved yet:")
+            print("    python run.py apps approve Photoshop.exe")
+        return 0
+
+    if not name:
+        print("  An application name is required, e.g. Photoshop.exe")
+        return 1
+
+    lowered = name.strip()
+    if action == "approve":
+        if lowered in cfg.tracking.approved_applications:
+            print("  Already approved.")
+            return 0
+        cfg.tracking.approved_applications.append(lowered)
+        save_config(cfg)
+        app.audit.record("config_changed", "approved_applications")
+        print(f"  Approved {lowered}")
+        return 0
+
+    before = len(cfg.tracking.approved_applications)
+    cfg.tracking.approved_applications = [
+        a for a in cfg.tracking.approved_applications if a.lower() != lowered.lower()
+    ]
+    if len(cfg.tracking.approved_applications) == before:
+        print("  That application was not approved.")
+        return 1
+    save_config(cfg)
+    app.audit.record("config_changed", "approved_applications")
+    print(f"  Removed {lowered}")
+    return 0
+
+
 def cmd_folders(app: Application, action: str, folder: str | None) -> int:
     cfg = app.config
     if action == "list":
@@ -457,6 +535,10 @@ def build_parser() -> argparse.ArgumentParser:
     sessions = sub.add_parser("sessions", help="Rebuild and show a day's sittings")
     sessions.add_argument("--date", type=str, default=None)
 
+    apps = sub.add_parser("apps", help="Opt-in application tracking")
+    apps.add_argument("action", choices=["on", "off", "list", "approve", "remove"])
+    apps.add_argument("name", nargs="?", default=None, help="e.g. Photoshop.exe")
+
     folders = sub.add_parser("folders", help="Manage monitored folders")
     folders.add_argument("action", choices=["list", "add", "remove"])
     folders.add_argument("folder", nargs="?", default=None)
@@ -496,6 +578,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_period_report(app, "monthly", args.date)
         if args.command == "sessions":
             return cmd_sessions(app, args.date)
+        if args.command == "apps":
+            return cmd_apps(app, args.action, args.name)
         if args.command == "folders":
             return cmd_folders(app, args.action, args.folder)
         if args.command == "retention":

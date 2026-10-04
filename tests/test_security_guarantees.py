@@ -175,6 +175,102 @@ def test_content_reading_is_off_by_default() -> None:
 
 
 # ======================================================================
+# psutil hands you surveillance by default
+# ======================================================================
+#
+# A psutil.Process exposes far more than the name of the program. Each of these
+# would defeat a different part of the security model, and open_files() would
+# defeat nearly all of it at once.
+FORBIDDEN_PSUTIL_METHODS: dict[str, str] = {
+    "open_files": "lists every file a process has open, across the whole disk",
+    "cmdline": "contains full file paths, bypassing the folder whitelist",
+    "environ": "environment variables routinely hold tokens",
+    "cwd": "a filesystem path",
+    "connections": "what the machine is talking to",
+    "net_connections": "what the machine is talking to",
+    "memory_maps": "reveals every mapped file",
+    "exe": "the install path",
+}
+
+
+@pytest.mark.parametrize("source_file", _python_files(), ids=lambda p: p.name)
+def test_no_module_reaches_for_forbidden_process_detail(source_file: Path) -> None:
+    """
+    Only `name` may be read from a process.
+
+    The application tracker learns that an APPROVED program was running and for
+    how long. One extra method call — open_files() in particular — would turn
+    it into exactly the monitoring software this project refuses to be, and it
+    would do so in a single line that reads as reasonable in review.
+    """
+    tree = ast.parse(source_file.read_text(encoding="utf-8"), filename=str(source_file))
+
+    # Strip docstrings: this project explains its reasoning in prose, and the
+    # explanations name the very methods being banned.
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)):
+            if (node.body and isinstance(node.body[0], ast.Expr)
+                    and isinstance(node.body[0].value, ast.Constant)
+                    and isinstance(node.body[0].value.value, str)):
+                node.body[0].value.value = ""
+
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        # proc.open_files(), p.cmdline(), …
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            why = FORBIDDEN_PSUTIL_METHODS.get(node.func.attr)
+            if why is not None:
+                offenders.append(f"{node.func.attr}() line {node.lineno} — {why}")
+        # process_iter(["name", "cmdline"]) — requested as a string, not called.
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            why = FORBIDDEN_PSUTIL_METHODS.get(node.value)
+            if why is not None:
+                offenders.append(f"{node.value!r} requested, line {node.lineno} — {why}")
+
+    assert not offenders, (
+        f"{source_file.name} reaches for process detail it must not: "
+        + "; ".join(offenders)
+    )
+
+
+def test_application_tracking_is_off_by_default() -> None:
+    """
+    Knowing which application was open is a step closer to watching a person
+    than knowing which file changed, so it is the user's decision to make.
+    """
+    from app.config import Config
+
+    cfg = Config()
+    assert cfg.tracking.track_applications is False
+    assert cfg.tracking.approved_applications == []
+
+
+def test_the_application_table_cannot_hold_a_title_or_a_path(tmp_path) -> None:
+    """
+    Enforced at the SCHEMA, not in the code that writes it.
+
+    A nullable `window_title` column is one feature request away from being
+    populated; a column that does not exist is not.
+    """
+    from app.database.db import Database
+
+    db = Database(tmp_path / "t.db")
+    columns = {
+        str(row[1]).lower()
+        for row in db.connection().execute("PRAGMA table_info(application_sessions)")
+    }
+    assert columns, "application_sessions was not created"
+
+    for banned in ("window_title", "title", "document", "path", "cmdline",
+                   "command_line", "url", "file", "cwd"):
+        assert banned not in columns, (
+            f"application_sessions has a {banned!r} column — the schema must "
+            "make this impossible, not merely unused."
+        )
+    db.close()
+
+
+# ======================================================================
 # Defaults collect nothing
 # ======================================================================
 def test_defaults_track_nothing() -> None:
