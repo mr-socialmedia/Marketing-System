@@ -1,0 +1,9 @@
+# Normalise to LF in the repository. The CI matrix runs on windows-latest and
+# ubuntu-latest, and a file that arrives with CRLF on Linux breaks a shebang and
+# makes every diff noisy.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF so they run when double-clicked.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

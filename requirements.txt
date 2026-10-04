@@ -1,0 +1,15 @@
+# Mohamed Work Tracker Agent — Phase 1
+#
+# NOTHING HERE CAPTURES INPUT, SCREEN, AUDIO OR VIDEO, and nothing here makes a
+# network call. tests/test_security_guarantees.py enforces that by scanning the
+# source tree for the libraries that would.
+
+watchdog>=4.0.0          # filesystem events
+pydantic>=2.7.0          # config and model validation
+cryptography>=42.0.0     # Fernet fallback; DPAPI is reached via ctypes
+
+# Phase 2+ (not imported by Phase 1 code)
+# psutil>=5.9.0          # process detection, for opt-in application tracking
+# PySide6>=6.7.0         # desktop GUI
+# APScheduler>=3.10.0    # scheduled local jobs
+

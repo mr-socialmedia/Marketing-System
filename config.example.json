@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "tracking": {
+    "folders": [
+      "D:\Work\Platinum",
+      "D:\Work\Marketing",
+      "D:\Projects"
+    ],
+    "track_applications": false,
+    "approved_applications": [
+      "Photoshop.exe", "Illustrator.exe", "AfterFX.exe",
+      "Adobe Premiere Pro.exe", "Code.exe",
+      "EXCEL.EXE", "WINWORD.EXE", "POWERPNT.EXE"
+    ],
+    "debounce_seconds": 90,
+    "session_timeout_minutes": 15
+  },
+  "privacy": {
+    "local_only": true,
+    "paused": false,
+    "private_mode": false,
+    "allow_file_content_reading": false,
+    "allow_filenames_in_ai_payloads": false
+  },
+  "retention": {
+    "raw_activity_days": 180,
+    "audit_log_days": 30,
+    "reports_days": 0
+  },
+  "ai": { "enabled": false, "provider": "none" },
+  "integrations": {
+    "gmail_enabled": false,
+    "google_calendar_enabled": false,
+    "google_drive_enabled": false
+  },
+  "project_rules": [
+    { "match": "platinum fit",  "project": "Platinum Fit",   "brand": "Platinum Fit",   "category": "Product / Creative / Marketing" },
+    { "match": "miss platinum", "project": "Miss Platinum",  "brand": "Miss Platinum",  "category": "Marketing / Creative" },
+    { "match": "platinum",      "project": "Platinum",       "brand": "Platinum",       "category": "Marketing / Creative / Digital" },
+    { "match": "al jazira",     "project": "Al Jazira Club", "brand": "Al Jazira Club", "category": "Sports Marketing" },
+    { "match": "kfa",           "project": "KFA",            "brand": "KFA",            "category": "Partnership / Sports Marketing" },
+    { "match": "mashhor",       "project": "Mashhor Hub",    "brand": "Mashhor Hub",    "category": "Product / Development / Marketing" }
+  ]
+}

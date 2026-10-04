@@ -1,0 +1,64 @@
+name: CI
+
+# The security suite is the point of this workflow. Everything else here exists
+# so that it runs.
+#
+# `test_security_guarantees.py` scans the source tree for keylogging, screen
+# capture, microphone, camera, clipboard and browser-history libraries, asserts
+# the tracker contains no file-reading call, and runs the whole local pipeline
+# with the socket layer severed. If any of those fail, the build fails — which
+# is the only form in which a privacy promise survives a year of feature work.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Run the security suite FIRST and on its own, so a failure there is
+      # unmistakable in the log rather than buried among behavioural failures.
+      - name: Security guarantees
+        run: pytest tests/test_security_guarantees.py -v
+
+      - name: Full suite
+        run: pytest -v
+
+  # Windows is the target platform, but the logic is portable and a Linux run
+  # catches anything that accidentally depends on Windows path semantics —
+  # including the DPAPI fallback actually falling back.
+  portability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - run: pytest -v

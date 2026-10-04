@@ -1,0 +1,29 @@
+# Nothing in these directories may ever be committed. The database holds
+# encrypted paths and the key file holds the key that opens them; a single
+# accidental commit of either is the whole privacy model gone.
+data/
+logs/
+reports/
+config.json
+*.key
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
