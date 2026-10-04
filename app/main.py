@@ -368,6 +368,39 @@ def cmd_sessions(app: Application, day: str | None) -> int:
     return 0
 
 
+def cmd_autostart(app: Application, action: str) -> int:
+    """
+    Register or remove the Windows logon task.
+
+    Audited, because starting automatically changes when the program observes
+    without anyone being present to notice it start.
+    """
+    from .security.autostart import AutostartError, is_registered, register, unregister
+
+    try:
+        if action == "status":
+            print(f"  Start at logon: {'ON' if is_registered() else 'OFF'}")
+            return 0
+
+        if action == "on":
+            target = register()
+            app.audit.record("config_changed", "autostart enabled")
+            print("  Registered. The tracker will start at your next logon.")
+            print(f"  File: {target}")
+            print("  It runs as you, with no elevation. Delete that file, or")
+            print("  run: python run.py autostart-off")
+            return 0
+
+        removed = unregister()
+        app.audit.record("config_changed", "autostart disabled")
+        print("  Removed." if removed else "  It was not registered.")
+        return 0
+
+    except AutostartError as exc:
+        print(f"  {exc}")
+        return 1
+
+
 def cmd_apps(app: Application, action: str, name: str | None) -> int:
     """
     Turn application tracking on or off, and manage the approved list.
@@ -535,6 +568,10 @@ def build_parser() -> argparse.ArgumentParser:
     sessions = sub.add_parser("sessions", help="Rebuild and show a day's sittings")
     sessions.add_argument("--date", type=str, default=None)
 
+    sub.add_parser("autostart-status", help="Is the logon task registered?")
+    sub.add_parser("autostart-on", help="Start tracking at Windows logon")
+    sub.add_parser("autostart-off", help="Stop starting at logon")
+
     apps = sub.add_parser("apps", help="Opt-in application tracking")
     apps.add_argument("action", choices=["on", "off", "list", "approve", "remove"])
     apps.add_argument("name", nargs="?", default=None, help="e.g. Photoshop.exe")
@@ -580,6 +617,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_sessions(app, args.date)
         if args.command == "apps":
             return cmd_apps(app, args.action, args.name)
+        if args.command.startswith("autostart"):
+            return cmd_autostart(app, args.command.removeprefix("autostart-"))
         if args.command == "folders":
             return cmd_folders(app, args.action, args.folder)
         if args.command == "retention":

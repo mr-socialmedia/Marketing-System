@@ -83,6 +83,7 @@ The report is printed and written to `reports/daily-YYYY-MM-DD.md`.
 | `retention preview\|run` | See or run the deletion sweep |
 | `delete-day [--date …]` | Delete one day's activity |
 | `audit` | The privacy audit trail |
+| `autostart-on|off|status` | Start at Windows logon (no elevation) |
 
 ---
 
@@ -172,9 +173,10 @@ The privacy controls are in Phase 1 rather than deferred. Building the features
 first and the controls later produces a program whose controls are retrofitted
 around whatever was convenient.
 
-**Phase 2** — PySide6 desktop app and dashboard. Work sessions, application
-tracking, the weekly review and the monthly report are done.
-**Phase 3** — AI provider abstraction behind the sanitizer, Gmail, Calendar, Drive.
+**Phase 2** — PySide6 desktop app and dashboard.
+Work sessions, application tracking, the weekly review, the monthly report,
+the AI provider abstraction and Windows autostart are done.
+**Phase 3** — Gmail, Calendar and Drive, reconciled against local activity.
 **Phase 4** — monthly pipeline, evidence viewer, installer, Task Scheduler.
 
 ---
