@@ -75,6 +75,9 @@ The report is printed and written to `reports/daily-YYYY-MM-DD.md`.
 | `pause` / `resume` | Stop and restart collection |
 | `private on` / `private off` | Private Mode — stronger, resets on restart |
 | `report [--date YYYY-MM-DD]` | Generate a daily report |
+| `weekly [--date …]` | The Sunday-to-Saturday review |
+| `monthly [--date …]` | The management-ready monthly report |
+| `sessions [--date …]` | Rebuild and show the day's sittings |
 | `folders list\|add\|remove` | Manage the whitelist |
 | `retention preview\|run` | See or run the deletion sweep |
 | `delete-day [--date …]` | Delete one day's activity |
@@ -159,16 +162,17 @@ data still has to get there — see the MCP note in
 
 ## Status
 
-**Phase 1 is complete**: configuration, database, encryption, filesystem
-tracking, the privacy gate, classification, deduplication, the sanitizer,
-retention, the audit trail, the daily report, the CLI, and the tests.
+**Phase 1 is complete and verified on Windows**: configuration, database,
+encryption (DPAPI), filesystem tracking, the privacy gate, classification,
+deduplication, the sanitizer, retention, the audit trail, work sessions, and
+daily, weekly and monthly reports — with 124 passing tests.
 
 The privacy controls are in Phase 1 rather than deferred. Building the features
 first and the controls later produces a program whose controls are retrofitted
 around whatever was convenient.
 
-**Phase 2** — PySide6 desktop app, work sessions, application tracking,
-dashboard, weekly report.
+**Phase 2** — PySide6 desktop app, application tracking, dashboard.
+Work sessions, the weekly review and the monthly report are done.
 **Phase 3** — AI provider abstraction behind the sanitizer, Gmail, Calendar, Drive.
 **Phase 4** — monthly pipeline, evidence viewer, installer, Task Scheduler.
 

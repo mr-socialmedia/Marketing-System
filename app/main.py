@@ -11,7 +11,10 @@ these functions.
     python run.py watch                     start tracking (foreground)
     python run.py pause | resume
     python run.py private on | off
-    python run.py report [--date YYYY-MM-DD]
+    python run.py report [--date YYYY-MM-DD]     a day
+    python run.py weekly [--date …]              Sunday to Saturday
+    python run.py monthly [--date …]             the whole month
+    python run.py sessions [--date …]            rebuild and show sittings
     python run.py folders add|remove|list
     python run.py retention run|preview
     python run.py delete-day [--date YYYY-MM-DD]
@@ -33,10 +36,14 @@ from .database.db import ActivityRepository, AuditRepository, Database, ReportRe
 from .intelligence.classifier import Classifier
 from .intelligence.deduplicator import Deduplicator
 from .reporting.daily_report import DailyReportGenerator
+from .reporting.period_report import (
+    PeriodReportGenerator, month_bounds, week_bounds,
+)
 from .security.audit import AuditLog
 from .security.encryption import build_cipher
 from .security.privacy import PrivacyGate
 from .security.retention import RetentionManager
+from .tracking.session_manager import SessionManager
 
 log = logging.getLogger("tracker")
 
@@ -102,6 +109,9 @@ class Application:
         self.reports = ReportRepository(self.db)
         self.retention = RetentionManager(
             self.db, config.retention, self.activities, self.audit_repo
+        )
+        self.sessions = SessionManager(
+            self.db, config.tracking.session_timeout_minutes
         )
 
     def close(self) -> None:
@@ -273,6 +283,71 @@ def cmd_report(app: Application, day: str | None) -> int:
     return 0
 
 
+def cmd_period_report(app: Application, kind: str, day: str | None) -> int:
+    """
+    A weekly or monthly report.
+
+    SESSIONS ARE REBUILT FIRST, every time. It is idempotent and cheap, and it
+    means the report can never be built from sessions produced under a
+    different timeout — which would be invisible in the output and wrong in the
+    statistics.
+    """
+    anchor = day or date.today().isoformat()
+    try:
+        datetime.strptime(anchor, "%Y-%m-%d")
+    except ValueError:
+        print(f"  {anchor!r} is not a date (expected YYYY-MM-DD).")
+        return 1
+
+    start, end = (month_bounds(anchor) if kind == "monthly" else week_bounds(anchor))
+
+    rebuilt = app.sessions.rebuild_range(start, end)
+    log.info("Rebuilt %d session(s) across %s..%s", rebuilt, start, end)
+
+    rows = app.activities.for_range(start, end)
+    stats = app.sessions.stats_for_range(start, end)
+    generator = PeriodReportGenerator()
+
+    if kind == "monthly":
+        content = generator.monthly(
+            rows, start, end, stats, app.sessions.sessions_by_category(start, end)
+        )
+        name = f"monthly-{start[:7]}"
+    else:
+        content = generator.weekly(rows, start, end, stats)
+        name = f"weekly-{start}"
+
+    path = generator.write(content, app.config.reports_dir, name)
+    app.reports.save(kind, start, end, content, str(path))
+    app.audit.record("report_generated", f"{kind} {start}")
+
+    print(f"\n{content}\n")
+    print(f"  Saved to {path}")
+    return 0
+
+
+def cmd_sessions(app: Application, day: str | None) -> int:
+    """Rebuild and show one day's sittings."""
+    target = day or date.today().isoformat()
+    count = app.sessions.rebuild_day(target)
+    rows = app.sessions.for_date(target)
+
+    if not rows:
+        print(f"  No sessions for {target}.")
+        return 0
+
+    print(f"\n  {count} session(s) on {target}\n")
+    for row in rows:
+        started = datetime.fromisoformat(row["started_at"]).astimezone().strftime("%H:%M")
+        ended = datetime.fromisoformat(row["ended_at"]).astimezone().strftime("%H:%M")
+        minutes = int(row["duration_minutes"] or 0)
+        span = f"{minutes}m" if minutes else "under a minute"
+        print(f"  {started}–{ended}  {row['project']:<18} {row['category']:<18} "
+              f"{span:<16} {row['file_count']} file(s)")
+    print()
+    return 0
+
+
 def cmd_folders(app: Application, action: str, folder: str | None) -> int:
     cfg = app.config
     if action == "list":
@@ -371,6 +446,17 @@ def build_parser() -> argparse.ArgumentParser:
     report = sub.add_parser("report", help="Generate a daily report")
     report.add_argument("--date", type=str, default=None)
 
+    weekly = sub.add_parser("weekly", help="Generate the Sunday-to-Saturday review")
+    weekly.add_argument("--date", type=str, default=None,
+                        help="Any day in the week (default: today)")
+
+    monthly = sub.add_parser("monthly", help="Generate the monthly work report")
+    monthly.add_argument("--date", type=str, default=None,
+                         help="Any day in the month (default: today)")
+
+    sessions = sub.add_parser("sessions", help="Rebuild and show a day's sittings")
+    sessions.add_argument("--date", type=str, default=None)
+
     folders = sub.add_parser("folders", help="Manage monitored folders")
     folders.add_argument("action", choices=["list", "add", "remove"])
     folders.add_argument("folder", nargs="?", default=None)
@@ -404,6 +490,12 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_private(app, args.state == "on")
         if args.command == "report":
             return cmd_report(app, args.date)
+        if args.command == "weekly":
+            return cmd_period_report(app, "weekly", args.date)
+        if args.command == "monthly":
+            return cmd_period_report(app, "monthly", args.date)
+        if args.command == "sessions":
+            return cmd_sessions(app, args.date)
         if args.command == "folders":
             return cmd_folders(app, args.action, args.folder)
         if args.command == "retention":
